@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import Nav from '../../lib/Nav';
 
 const LS = 'ip_operador_prefs';
 function agoraLocal() {
@@ -9,6 +8,25 @@ function agoraLocal() {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 function prefs() { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } }
+
+function Nav({ email, onSair, atual }) {
+  const item = (href, label) => (
+    <a key={href} href={href} className={'navb' + (atual === href ? ' on' : '')}>{label}</a>
+  );
+  return (
+    <div className="navbar">
+      <b className="navbrand">Disponibilidade — Ilha Pura</b>
+      <nav className="navlinks">
+        {item('/painel', 'Painel operador')}
+        {item('/espelho', 'Espelho TV')}
+        {item('/indicadores', 'Indicadores')}
+      </nav>
+      <span className="sp" />
+      {email && <span className="muted">{email}</span>}
+      {onSair && <button className="sm" onClick={onSair}>Sair</button>}
+    </div>
+  );
+}
 
 export default function Painel() {
   const [session, setSession] = useState(null);
@@ -150,7 +168,7 @@ export default function Painel() {
 
   return (
     <div className="wrap">
-      <Nav email={session.user.email} onSair={() => supabase.auth.signOut()} />
+      <Nav email={session.user.email} onSair={() => supabase.auth.signOut()} atual="/painel" />
       {msg && <div className={'msg ' + (msg.t === 'ok' ? 'ok' : 'err')}>{msg.m}</div>}
 
       <div className="chips">
