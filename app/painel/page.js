@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import Nav from '../../lib/Nav';
 
 const LS = 'ip_operador_prefs';
 function agoraLocal() {
@@ -149,11 +150,7 @@ export default function Painel() {
 
   return (
     <div className="wrap">
-      <div className="topbar">
-        <b>Painel do operador</b>
-        <span className="muted">· {session.user.email}</span>
-        <button className="sm" onClick={() => supabase.auth.signOut()}>Sair</button>
-      </div>
+      <Nav email={session.user.email} onSair={() => supabase.auth.signOut()} />
       {msg && <div className={'msg ' + (msg.t === 'ok' ? 'ok' : 'err')}>{msg.m}</div>}
 
       <div className="chips">
