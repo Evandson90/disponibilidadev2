@@ -9,8 +9,18 @@ export default function Espelho() {
   const [online, setOnline] = useState(true);
 
   async function load() {
-    const { data, error } = await supabase.from('vw_espelho').select('*');
-    if (!error) { setCells(data || []); setTs(new Date().toLocaleTimeString('pt-BR')); setOnline(true); }
+    // Paginado: a API do Supabase devolve no maximo 1000 linhas por chamada
+    const PAGE = 1000; let from = 0; let out = []; let erro = false;
+    while (true) {
+      const { data, error } = await supabase.from('vw_espelho').select('*')
+        .order('chave').range(from, from + PAGE - 1);
+      if (error) { erro = true; break; }
+      out = out.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+      if (from > 20000) break;
+    }
+    if (!erro) { setCells(out); setTs(new Date().toLocaleTimeString('pt-BR')); setOnline(true); }
     else { setOnline(false); }
   }
   async function loadStatus() {
