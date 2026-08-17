@@ -31,8 +31,23 @@ export default function Painel() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Busca paginada: a API do Supabase devolve no maximo 1000 linhas por chamada
+  async function fetchAll(view, order) {
+    const PAGE = 1000; let from = 0; let out = [];
+    while (true) {
+      const { data, error } = await supabase.from(view).select('*').order(order)
+        .range(from, from + PAGE - 1);
+      if (error) break;
+      out = out.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+      if (from > 20000) break;
+    }
+    return out;
+  }
+
   async function load() {
-    const { data } = await supabase.from('vw_operador').select('*').order('emp_ordem').limit(5000);
+    const data = await fetchAll('vw_operador', 'chave');
     setUnits(data || []);
     const { data: st } = await supabase.from('status').select('*').order('ordem');
     const uniq = []; const seen = new Set();
