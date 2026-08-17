@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import Nav from '../../lib/Nav';
 
 const RESERVA_ST = ['Reservada', 'Reservada c/ Recibão', 'Em Negociação', 'Pix Validado', 'Em validação', 'Em Simulação'];
 
@@ -26,6 +25,25 @@ async function fetchAll(view, order) {
     from += PAGE; if (from > 20000) break;
   }
   return out;
+}
+
+function Nav({ email, onSair, atual }) {
+  const item = (href, label) => (
+    <a key={href} href={href} className={'navb' + (atual === href ? ' on' : '')}>{label}</a>
+  );
+  return (
+    <div className="navbar">
+      <b className="navbrand">Disponibilidade — Ilha Pura</b>
+      <nav className="navlinks">
+        {item('/painel', 'Painel operador')}
+        {item('/espelho', 'Espelho TV')}
+        {item('/indicadores', 'Indicadores')}
+      </nav>
+      <span className="sp" />
+      {email && <span className="muted">{email}</span>}
+      {onSair && <button className="sm" onClick={onSair}>Sair</button>}
+    </div>
+  );
 }
 
 export default function Indicadores() {
@@ -212,7 +230,7 @@ export default function Indicadores() {
 
   return (
     <div className="wrap">
-      <Nav email={session.user.email} onSair={() => supabase.auth.signOut()} />
+      <Nav email={session.user.email} onSair={() => supabase.auth.signOut()} atual="/indicadores" />
       {carregando && <div className="msg">Carregando indicadores…</div>}
 
       <div className="card">
