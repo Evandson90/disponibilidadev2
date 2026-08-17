@@ -64,3 +64,29 @@ button.sm{padding:4px 8px;font-size:12px}
 .tower.destaque .cellop,.tower.destaque .cell{font-size:105%}
 .tagl{background:#f9a825;color:#1a1a1a;font-style:normal;font-size:10px;font-weight:800;
       padding:2px 7px;border-radius:20px;margin-right:8px;vertical-align:middle}
+
+/* ---- Menu de navegação (Painel · Espelho · Indicadores) ---- */
+.navbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0;
+        border-bottom:1px solid #2a323c;margin-bottom:14px}
+.navbrand{font-size:14px;white-space:nowrap}
+.navlinks{display:flex;gap:6px;flex-wrap:wrap}
+.navb{background:#20262e;color:#dbe3ea;border:1px solid #2a323c;border-radius:8px;
+      padding:7px 14px;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap}
+.navb:hover{background:#28303a}
+.navb.on{background:#2d6cdf;border-color:#2d6cdf;color:#fff}
+.navbar .sp{flex:1}
+
+/* ---- Indicadores ---- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:#181c22;border:1px solid #2a323c;border-radius:10px;padding:14px;text-align:center}
+.kpi .n{font-size:26px;font-weight:800;line-height:1.1}
+.kpi .l{font-size:11px;color:#9aa6b2;margin-top:4px}
+.card{background:#181c22;border:1px solid #2a323c;border-radius:10px;padding:14px;margin-bottom:14px}
+.card h4{margin:0 0 10px;font-size:14px}
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:860px){.cols2{grid-template-columns:1fr}}
+.b-row{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px}
+.b-row .lab{width:200px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b-row .track{flex:1;height:9px;background:#20262e;border-radius:6px;overflow:hidden}
+.b-row .fillb{height:100%;border-radius:6px}
+.tag{background:#20262e;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700}
