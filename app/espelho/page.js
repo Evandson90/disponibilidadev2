@@ -2,14 +2,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
+// Tipologia abreviada para caber na TV:
+//   "2 Qtos."               -> "2Q"
+//   "2 Qtos. Double Suíte"  -> "2Q DS"
+//   "Apartamento" (generico) -> nao exibe
+function tipo(u) {
+  let t = (u.tipologia || '').trim();
+  if (!t || /^apartamento$/i.test(t)) return null;
+  t = t.replace(/(\d+)\s*Qtos?\.?/i, '$1Q');
+  t = t.replace(/(\d+)\s*Quartos?/i, '$1Q');
+  t = t.replace(/Double\s*Su[ií]te/i, 'DS');
+  return t.replace(/\s+/g, ' ').trim();
+}
+
 export default function Espelho() {
   const [cells, setCells] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [ts, setTs] = useState('');
   const [online, setOnline] = useState(true);
+  const [full, setFull] = useState(false);
 
   async function load() {
-    // Paginado: a API do Supabase devolve no maximo 1000 linhas por chamada
     const PAGE = 1000; let from = 0; let out = []; let erro = false;
     while (true) {
       const { data, error } = await supabase.from('vw_espelho').select('*')
@@ -24,7 +37,7 @@ export default function Espelho() {
     else { setOnline(false); }
   }
   async function loadStatus() {
-    const { data } = await supabase.from('status').select('*');
+    const { data } = await supabase.from('status').select('*').order('ordem');
     setStatuses(data || []);
   }
 
@@ -35,68 +48,111 @@ export default function Espelho() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'unidade' }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'status' }, () => loadStatus())
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    const fs = () => setFull(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', fs);
+    return () => { supabase.removeChannel(ch); document.removeEventListener('fullscreenchange', fs); };
   }, []);
 
-  const smap = useMemo(() => { const m = {}; statuses.forEach(s => m[s.nome] = s); return m; }, [statuses]);
-  // Blocos vindos do banco (respeita bloco oculto, ex.: Lyra)
+  function telaCheia() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  }
+
+  // Status unicos por nome (a tabela repete o status para cada empreendimento)
+  const smap = useMemo(() => {
+    const m = {};
+    statuses.forEach(s => { if (!m[s.nome]) m[s.nome] = s; });
+    return m;
+  }, [statuses]);
+
   const blocos = useMemo(() => {
     const m = new Map();
-    cells.forEach(c => { if (!m.has(c.bloco_num)) m.set(c.bloco_num, { num: c.bloco_num, nome: c.bloco, ordem: c.bloco_ordem ?? c.bloco_num, destaque: !!c.bloco_destaque }); });
+    cells.forEach(c => {
+      if (!m.has(c.bloco_num)) m.set(c.bloco_num, {
+        num: c.bloco_num, nome: c.bloco,
+        ordem: c.bloco_ordem == null ? c.bloco_num : c.bloco_ordem,
+        destaque: !!c.bloco_destaque
+      });
+    });
     return [...m.values()].sort((a, b) => (b.destaque - a.destaque) || (a.ordem - b.ordem) || (a.num - b.num));
   }, [cells]);
+
+  // Maior numero de unidades por andar entre TODAS as torres
+  // -> todas as celulas ficam do mesmo tamanho, inclusive as do Gaia
+  const maxPorAndar = useMemo(() => {
+    const g = {}; let mx = 1;
+    cells.forEach(c => { const k = c.bloco_num + '|' + c.andar; g[k] = (g[k] || 0) + 1; });
+    Object.keys(g).forEach(k => { if (g[k] > mx) mx = g[k]; });
+    return mx;
+  }, [cells]);
+
+  // Legenda: so os status presentes na tela, sem repetir
+  const legenda = useMemo(() => {
+    const usados = {};
+    cells.forEach(c => { usados[c.status] = true; });
+    return Object.keys(smap).filter(n => usados[n] && smap[n].visivel_tv !== false)
+      .map(n => smap[n])
+      .sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+  }, [cells, smap]);
+
+  const temDS = useMemo(() => cells.some(c => /Double\s*Su[ií]te/i.test(c.tipologia || '')), [cells]);
+
   const money = v => v == null ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
-  function tower(bl, name, destaque) {
-    const bu = cells.filter(c => c.bloco_num === bl);
-    const floors = [...new Set(bu.map(c => c.andar))].filter(x => x != null).sort((a, b) => b - a);
-    const perFloor = Math.max(1, ...floors.map(f => bu.filter(c => c.andar === f).length));
+  function torre(b) {
+    const bu = cells.filter(c => c.bloco_num === b.num);
+    const andares = [...new Set(bu.map(c => c.andar))].filter(x => x != null).sort((x, y) => y - x);
     return (
-      <div className={'tower' + (destaque ? ' destaque' : '')} key={bl}>
-        <h3>{destaque && <em className="tagl">LANÇAMENTO</em>}{name}</h3>
-        {floors.map(f => {
-          const row = bu.filter(c => c.andar === f).sort((a, b) => a.unidade_num - b.unidade_num);
-          const cob = row[0] && row[0].andar_tipo === 'Cobertura';
-          return (
-            <div className="floor" key={f}>
-              <div className="fl">{cob ? 'COB' : f}</div>
-              <div className="cells" style={{ gridTemplateColumns: `repeat(${perFloor},1fr)` }}>
-                {row.map(u => {
-                  const s = smap[u.status] || {};
-                  const tip = (u.tipologia || '').replace(' Qtos.', 'Q').replace(' Qto.', 'Q');
-                  return (
-                    <div className="cell" key={u.chave} style={{ background: s.cor_fundo || '#888', color: s.cor_texto || '#fff' }}>
-                      <b>{u.unidade_num}</b>
-                      <span className="t">{tip} · {u.m2}m²</span>
-                      {u.valor != null && <span className="t">{money(u.valor)}</span>}
-                    </div>
-                  );
-                })}
+      <div className={'tvtower' + (b.destaque ? ' destaque' : '')} key={b.num}>
+        <h3>{b.destaque && <em className="tagl">LANÇAMENTO</em>}Torre {b.nome}</h3>
+        <div className="tvfloors">
+          {andares.map(f => {
+            const row = bu.filter(c => c.andar === f).sort((a, c) => a.unidade_num - c.unidade_num);
+            return (
+              <div className="tvfloor" key={f}>
+                <div className="tvfl">{f}</div>
+                <div className="tvcells" style={{ gridTemplateColumns: 'repeat(' + maxPorAndar + ',1fr)' }}>
+                  {row.map(u => {
+                    const s = smap[u.status] || {};
+                    const tp = tipo(u);
+                    return (
+                      <div className="tvcell" key={u.chave}
+                        style={{ background: s.cor_fundo || '#888', color: s.cor_texto || '#fff' }}>
+                        <b>{u.unidade_num}</b>
+                        {tp && <span className="tvtip">{tp}</span>}
+                        <span>{u.m2}m²</span>
+                        {u.valor != null && u.valor > 1 && <span>{money(u.valor)}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="wrap">
-      <div className="topbar">
+    <div className="tv">
+      <div className="tv-head">
         <span className="dot" style={{ background: online ? '#2e7d32' : '#c0392b' }} />
-        <b>{cells[0]?.empreendimento || 'Espelho de Disponibilidade'}</b>
-        <span className="muted">· {cells.length} unidades · atualizado {ts}</span>
+        <b>{(cells[0] && cells[0].empreendimento) || 'Espelho de Disponibilidade'}</b>
+        <span className="tv-sub">{cells.length} unidades · {ts}</span>
+        <span className="sp" />
+        <button className="tvbtn" onClick={telaCheia}>{full ? '✕ Sair da tela cheia' : '⛶ Tela cheia'}</button>
       </div>
-      <div className="grid-tv" style={{ gridTemplateColumns: blocos.map(b => b.destaque ? '1.45fr' : '1fr').join(' ') || '1fr' }}>
-        {blocos.map(b => tower(b.num, b.nome, b.destaque))}
-      </div>
-      <div className="legend">
-        {statuses.filter(s => s.visivel_tv).map(s => (
-          <span key={s.nome}><i className="sw" style={{ background: s.cor_fundo }} />{s.nome}</span>
+
+      {!online && <div className="tv-off">⚠ SEM CONEXÃO — exibindo o último estado conhecido. Reconectando…</div>}
+
+      <div className="tv-main">{blocos.map(torre)}</div>
+
+      <div className="tv-legend">
+        {legenda.map(s => (
+          <span key={s.nome}><i style={{ background: s.cor_fundo }} />{s.nome}</span>
         ))}
-      </div>
-      <div className="muted" style={{ textAlign: 'center' }}>
-        Somente leitura · sem dados de cliente, corretor ou proposta
+        {temDS && <span className="tv-ds">DS = Double Suíte</span>}
       </div>
     </div>
   );
