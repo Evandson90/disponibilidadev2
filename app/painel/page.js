@@ -8,6 +8,14 @@ function agoraLocal() {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 function prefs() { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } }
+// "2 Qtos. Double Suíte" -> "2Q DS"  |  "3 Qtos." -> "3Q"
+function tipoCurto(t) {
+  let s = (t || '').trim();
+  if (!s || /^apartamento$/i.test(s)) return '';
+  s = s.replace(/(\d+)\s*Qtos?\.?/i, '$1Q').replace(/(\d+)\s*Quartos?/i, '$1Q');
+  s = s.replace(/Double\s*Su[ií]te/i, 'DS');
+  return s.replace(/\s+/g, ' ').trim();
+}
 
 function Nav({ email, onSair, atual }) {
   const item = (href, label) => (
@@ -121,7 +129,8 @@ export default function Painel() {
     setEditing(u);
     setForm({
       novo_status: statusSugerido || u.status,
-      cliente: '', imobiliaria: p.imobiliaria || '', corretor: p.corretor || '', gerencia: p.gerencia || '',
+      cliente: '', idProposta: '', imobiliaria: p.imobiliaria || '', corretor: p.corretor || '',
+      gerencia: p.gerencia || '',
       hora_reserva: agoraLocal(), justificativa: '', confirma: false, versao: u.versao
     });
   }
@@ -133,7 +142,11 @@ export default function Painel() {
       p_chave: editing.chave,
       p_novo_status: form.novo_status,
       p_versao_esperada: form.versao,
-      p_comercial: { cliente: form.cliente, imobiliaria: form.imobiliaria, corretor: form.corretor, gerencia: form.gerencia, hora_reserva: form.hora_reserva },
+      p_comercial: {
+        cliente: form.cliente, idProposta: form.idProposta,
+        imobiliaria: form.imobiliaria, corretor: form.corretor,
+        gerencia: form.gerencia, hora_reserva: form.hora_reserva
+      },
       p_confirma: form.confirma,
       p_justificativa: form.justificativa,
       p_origem: 'Painel Web'
@@ -207,8 +220,9 @@ export default function Painel() {
                   const c = cor(u.status);
                   return (
                     <button key={u.chave} className="cellop" style={{ background: c.cor_fundo, color: c.cor_texto }}
-                      title={`${u.bloco} · ${u.status} · ${u.m2}m²`} onClick={() => abrir(u)}>
+                      title={`${u.bloco} · ${u.tipologia || ''} · ${u.status} · ${u.m2}m²`} onClick={() => abrir(u)}>
                       <b>{u.unidade_num}</b>
+                      <span>{tipoCurto(u.tipologia)}</span>
                       <span>{u.m2}m²</span>
                     </button>
                   );
@@ -219,13 +233,14 @@ export default function Painel() {
         </div>
       ) : (
         <table>
-          <thead><tr><th>Bloco</th><th>Un.</th><th>Andar</th><th>m²</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Bloco</th><th>Un.</th><th>Andar</th><th>Tipologia</th><th>m²</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {filtrados.slice(0, 800).map(u => {
               const c = cor(u.status);
               return (
                 <tr key={u.chave}>
-                  <td>{u.bloco}</td><td>{u.unidade_num}</td><td>{u.andar}</td><td>{u.m2}</td>
+                  <td>{u.bloco}</td><td>{u.unidade_num}</td><td>{u.andar}</td>
+                  <td>{u.tipologia || '—'}</td><td>{u.m2}</td>
                   <td><span className="badge" style={{ background: c.cor_fundo, color: c.cor_texto }}>{u.status}</span></td>
                   <td><button className="sm" onClick={() => abrir(u)}>Alterar</button></td>
                 </tr>
@@ -257,6 +272,7 @@ export default function Painel() {
                 </select>
               </label>
               <label>Cliente<input autoFocus value={form.cliente} onChange={e => setForm({ ...form, cliente: e.target.value })} /></label>
+              <label>ID da reserva / proposta<input value={form.idProposta} placeholder="Ex.: PRP-1001" onChange={e => setForm({ ...form, idProposta: e.target.value })} /></label>
               <label>Corretor<input value={form.corretor} onChange={e => setForm({ ...form, corretor: e.target.value })} /></label>
               <label>Imobiliária<input value={form.imobiliaria} onChange={e => setForm({ ...form, imobiliaria: e.target.value })} /></label>
               <label>Gerente<input value={form.gerencia} onChange={e => setForm({ ...form, gerencia: e.target.value })} /></label>
