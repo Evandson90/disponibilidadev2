@@ -125,17 +125,35 @@ export default function Painel() {
     const seen = new Set(); const uniq = [];
     (st || []).forEach(s => { if (!seen.has(s.nome)) { seen.add(s.nome); uniq.push(s); } });
     setStatuses(uniq);
-    // dados comerciais ja registrados (para reabrir a reserva preenchida)
-    const dc = await fetchAll('dado_comercial', 'unidade_id');
-    const m = {}; (dc || []).forEach(d => { m[d.unidade_id] = d; });
-    setCom(m);
+  }
+
+  // Busca os dados comerciais de UMA unidade, so quando o operador a abre.
+  // (evita trazer milhares de registros a cada carga)
+  async function comercialDe(unidadeId) {
+    const { data } = await supabase.from('dado_comercial')
+      .select('*').eq('unidade_id', unidadeId).maybeSingle();
+    if (data) setCom(prev => Object.assign({}, prev, { [unidadeId]: data }));
+    return data || {};
   }
 
   useEffect(() => {
     if (!session) return;
     load();
     const ch = supabase.channel('rt-painel')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'unidade' }, () => load())
+      // UPDATE: atualiza SO a unidade alterada (nao recarrega as 3.060 linhas)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'unidade' }, payload => {
+        const n = payload && payload.new;
+        if (!n) return;
+        setUnits(prev => prev.map(u => u.chave === n.chave
+          ? Object.assign({}, u, {
+              status: n.status, versao: n.versao, valor: n.valor,
+              tipologia: n.tipologia, atualizado_em: n.atualizado_em,
+              atualizado_por: n.atualizado_por
+            })
+          : u));
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'unidade' }, () => load())
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'unidade' }, () => load())
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, [session]);
@@ -187,8 +205,8 @@ export default function Painel() {
 
   // Abre a unidade JA PREENCHIDA com o que estiver gravado.
   // Se nunca houve reserva, usa as preferencias do operador.
-  function abrir(u) {
-    const d = com[u.id] || {};
+  async function abrir(u) {
+    const d = await comercialDe(u.id);
     const p = prefs();
     const temReserva = !!(d.cliente || d.corretor || d.imobiliaria || d.id_proposta);
     setMsg(null);
@@ -202,12 +220,18 @@ export default function Painel() {
       gerencia: d.gerencia || (temReserva ? '' : (p.gerencia || '')),
       hora_reserva: d.hora_reserva ? paraCampo(d.hora_reserva) : agoraBR(),
       justificativa: '',
+      limpar: false,
       versao: u.versao
     });
   }
 
   // Ao escolher um corretor conhecido, preenche a imobiliaria dele.
   // Se o operador ja tiver digitado outra imobiliaria, respeita o que esta la.
+  // Alterar qualquer campo cancela a marcacao de limpeza
+  function up(campo, valor) {
+    setForm(f => Object.assign({}, f, { [campo]: valor, limpar: false }));
+  }
+
   function escolherCorretor(nome) {
     setForm(f => {
       const imob = CORRETOR_IMOB[nome];
@@ -215,14 +239,16 @@ export default function Painel() {
       const podeTrocar = !f.imobiliaria || f.imobiliaria === antiga;
       return Object.assign({}, f, {
         corretor: nome,
-        imobiliaria: (imob && podeTrocar) ? imob : f.imobiliaria
+        imobiliaria: (imob && podeTrocar) ? imob : f.imobiliaria,
+        limpar: false
       });
     });
   }
 
+  // Marca a unidade para ter os dados APAGADOS no banco ao salvar.
   function limpar() {
-    setForm(f => Object.assign({}, f, VAZIO, { hora_reserva: agoraBR() }));
-    setMsg({ t: 'ok', m: 'Campos limpos. Preencha os novos dados e salve.' });
+    setForm(f => Object.assign({}, f, VAZIO, { hora_reserva: agoraBR(), limpar: true }));
+    setMsg({ t: 'ok', m: 'Dados marcados para exclusao. Clique em Salvar para confirmar.' });
   }
 
   async function salvar() {
@@ -239,15 +265,18 @@ export default function Painel() {
       },
       p_confirma: true,
       p_justificativa: form.justificativa,
-      p_origem: 'Painel Web'
+      p_origem: 'Painel Web',
+      p_limpar: !!form.limpar
     });
     setSalvando(false);
     if (error) { setMsg({ t: 'err', m: error.message }); return; }
     if (data && data.ok) {
       localStorage.setItem(LS, JSON.stringify({ corretor: form.corretor, imobiliaria: form.imobiliaria, gerencia: form.gerencia }));
-      setMsg({ t: 'ok', m: `${editing.bloco} ${editing.unidade_num} → ${data.status}` });
+      setMsg({ t: 'ok', m: `${editing.bloco} ${editing.unidade_num} → ${data.status}`
+        + (data.limpou ? ' · dados da reserva apagados' : '') });
       setEditing(null);
-      load();
+      setCom(prev => { const c = Object.assign({}, prev); delete c[editing.id]; return c; });
+      comercialDe(editing.id);
     } else setMsg({ t: 'err', m: (data && data.msg) || 'Operação rejeitada' });
   }
 
@@ -349,8 +378,11 @@ export default function Painel() {
             <div className="muted">
               {editing.empreendimento} · {editing.andar}º andar · {editing.tipologia || ''} · {editing.m2}m² · atual: {editing.status}
             </div>
-            {temReserva && <div className="msg ok" style={{ marginTop: 8 }}>
+            {temReserva && !form.limpar && <div className="msg ok" style={{ marginTop: 8 }}>
               Reserva já registrada — os campos abaixo estão preenchidos com os dados atuais.
+            </div>}
+            {form.limpar && <div className="msg err" style={{ marginTop: 8 }}>
+              ⚠ Os dados desta reserva serão APAGADOS ao salvar.
             </div>}
             {msg && <div className={'msg ' + (msg.t === 'ok' ? 'ok' : 'err')}>{msg.m}</div>}
 
@@ -368,9 +400,9 @@ export default function Painel() {
                   {statuses.map(s => <option key={s.nome}>{s.nome}</option>)}
                 </select>
               </label>
-              <label>Cliente<input autoFocus value={form.cliente} onChange={e => setForm(Object.assign({}, form, { cliente: e.target.value }))} /></label>
+              <label>Cliente<input autoFocus value={form.cliente} onChange={e => up('cliente', e.target.value)} /></label>
               <label>ID da reserva / proposta<input value={form.idProposta} placeholder="Ex.: PRP-1001"
-                onChange={e => setForm(Object.assign({}, form, { idProposta: e.target.value }))} /></label>
+                onChange={e => up('idProposta', e.target.value)} /></label>
               <label>Corretor
                 <input list="lista-corr" placeholder="Digite para buscar ou escreva"
                   value={form.corretor} onChange={e => escolherCorretor(e.target.value)} />
@@ -380,16 +412,16 @@ export default function Painel() {
               </label>
               <label className="full">Imobiliária
                 <input list="lista-imob" placeholder="Digite para buscar ou escreva uma nova"
-                  value={form.imobiliaria} onChange={e => setForm(Object.assign({}, form, { imobiliaria: e.target.value }))} />
+                  value={form.imobiliaria} onChange={e => up('imobiliaria', e.target.value)} />
                 <datalist id="lista-imob">
                   {IMOBILIARIAS.map(n => <option key={n} value={n} />)}
                 </datalist>
               </label>
-              <label>Gerente<input value={form.gerencia} onChange={e => setForm(Object.assign({}, form, { gerencia: e.target.value }))} /></label>
+              <label>Gerente<input value={form.gerencia} onChange={e => up('gerencia', e.target.value)} /></label>
               <label>Hora da reserva (Brasília)<input type="datetime-local" value={form.hora_reserva}
-                onChange={e => setForm(Object.assign({}, form, { hora_reserva: e.target.value }))} /></label>
+                onChange={e => up('hora_reserva', e.target.value)} /></label>
               <label className="full">Justificativa (opcional)<input value={form.justificativa}
-                onChange={e => setForm(Object.assign({}, form, { justificativa: e.target.value }))} /></label>
+                onChange={e => up('justificativa', e.target.value)} /></label>
             </div>
 
             <div className="bar" style={{ justifyContent: 'flex-end' }}>
