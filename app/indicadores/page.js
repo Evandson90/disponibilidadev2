@@ -3,9 +3,29 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 
 const TZ = 'America/Sao_Paulo';
-const RES_ST = ['Reservada', 'Reservada c/ Recibão', 'Pix Validado', 'Em validação'];
 
-// ---- Datas sempre no horario de Brasilia -------------------------------
+// Grupo 1 — EM ANDAMENTO (negociação + reserva)
+const G_NEG_RES = ['Em Negociação', 'Reservada', 'Reservada c/ Recibão', 'Em validação', 'Em Simulação'];
+// Grupo 2 — FECHADO (vendido + pix validado)
+const G_VEN_PIX = ['Vendido', 'Pix Validado'];
+
+// ---- EQUIPES ---------------------------------------------------------
+const EQ_PLANTAO = ['sawala', 'somma rio', 'ptm consultoria', 'lopes rj'];
+const EQ_IPVENDAS = ['ip vendas'];
+function semAcento(x) {
+  return String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+function equipeDe(imob) {
+  const n = semAcento(imob);
+  if (!n) return 'Parceria';
+  if (EQ_IPVENDAS.some(k => n.indexOf(k) >= 0)) return 'IP Vendas';
+  if (EQ_PLANTAO.some(k => n.indexOf(k) >= 0)) return 'Plantonistas';
+  return 'Parceria';
+}
+const ORDEM_EQ = { 'Plantonistas': 1, 'IP Vendas': 2, 'Parceria': 3 };
+const COR_EQ = { 'Plantonistas': '#2d6cdf', 'IP Vendas': '#00838f', 'Parceria': '#8d6e63' };
+
+// ---- Datas sempre no horário de Brasília -----------------------------
 function fmtBR(iso, comData) {
   if (!iso) return '';
   const o = comData
@@ -13,7 +33,6 @@ function fmtBR(iso, comData) {
     : { timeZone: TZ, hour: '2-digit', minute: '2-digit' };
   return new Intl.DateTimeFormat('pt-BR', o).format(new Date(iso));
 }
-// "AAAA-MM-DD" do instante, no fuso de Brasilia
 function diaBR(iso) {
   if (!iso) return '';
   return new Intl.DateTimeFormat('sv-SE', {
@@ -84,14 +103,14 @@ export default function Indicadores() {
     if (!ses) return;
     carregar();
     const ch = supabase.channel('rt-ind')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'unidade' }, () => carregar())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'unidade' }, () => carregar())
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, [ses]);
 
   const uMap = useMemo(() => { const m = {}; un.forEach(u => { m[u.chave] = u; }); return m; }, [un]);
 
-  // status final de cada unidade DENTRO do periodo (comparando por dia de Brasilia)
+  // status final de cada unidade DENTRO do período (por dia de Brasília)
   const movs = useMemo(() => {
     const m = {}, t = {};
     aud.filter(a => a.campo === 'status' && a.ts)
@@ -104,60 +123,69 @@ export default function Indicadores() {
   }, [aud, wk]);
 
   const chaves = Object.keys(movs);
-  const ehVenda = s => s === 'Vendido';
-  const ehReserva = s => RES_ST.indexOf(s) >= 0;
-  const ehNegoc = s => s === 'Em Negociação';
+  const g1 = s => G_NEG_RES.indexOf(s) >= 0;   // negociação + reserva
+  const g2 = s => G_VEN_PIX.indexOf(s) >= 0;   // vendido + pix validado
+  const conta = s => g1(s) || g2(s);
 
-  // TOTAIS: somam APENAS os status que contam (reserva, venda, negociacao)
   const totPer = useMemo(() => {
-    let res = 0, ven = 0, neg = 0;
-    chaves.forEach(k => {
-      const s = movs[k];
-      if (ehVenda(s)) ven++; else if (ehReserva(s)) res++; else if (ehNegoc(s)) neg++;
-    });
-    return { res, ven, neg, total: res + ven + neg };
+    let a = 0, f = 0;
+    chaves.forEach(k => { const s = movs[k]; if (g2(s)) f++; else if (g1(s)) a++; });
+    return { and: a, fec: f, total: a + f };
   }, [movs]);
 
-  // ---- LANCAMENTO: torre em destaque (Gaia) ----
+  const pct = (v, t) => t ? Math.round(v / t * 100) : 0;
+
+  // ---- LANÇAMENTO (torre em destaque) ----
   const gaia = useMemo(() => un.filter(u => u.bloco_destaque), [un]);
   const nomeGaia = gaia.length
     ? (gaia[0].empreendimento || '').replace('Ilha Pura - ', '') + ' · Torre ' + gaia[0].bloco
     : 'Lançamento';
   const gaiaMov = chaves.filter(k => uMap[k] && uMap[k].bloco_destaque);
-  const gRes = gaiaMov.filter(k => ehReserva(movs[k])).length;
-  const gVen = gaiaMov.filter(k => ehVenda(movs[k])).length;
-  const gNeg = gaiaMov.filter(k => ehNegoc(movs[k])).length;
-  const gTot = gRes + gVen + gNeg;
+  const gAnd = gaiaMov.filter(k => g1(movs[k])).length;
+  const gFec = gaiaMov.filter(k => g2(movs[k])).length;
+  const gTot = gAnd + gFec;
 
-  // ---- PERIODO por empreendimento ----
+  // ---- POR EQUIPE ----
+  const porEquipe = useMemo(() => {
+    const m = {};
+    chaves.forEach(k => {
+      const u = uMap[k]; if (!u) return;
+      const s = movs[k]; if (!conta(s)) return;
+      const d = com[u.id] || {};
+      const eq = equipeDe(d.imobiliaria);
+      if (!m[eq]) m[eq] = { and: 0, fec: 0, tot: 0 };
+      m[eq].tot++;
+      if (g2(s)) m[eq].fec++; else m[eq].and++;
+    });
+    return Object.keys(m).sort((a, b) => (ORDEM_EQ[a] || 9) - (ORDEM_EQ[b] || 9)).map(k => [k, m[k]]);
+  }, [movs, uMap, com]);
+
+  // ---- POR EMPREENDIMENTO ----
   const porEmp = useMemo(() => {
     const m = {};
     chaves.forEach(k => {
       const u = uMap[k]; if (!u) return;
-      const s = movs[k];
-      if (!ehVenda(s) && !ehReserva(s) && !ehNegoc(s)) return;   // so os status que contam
+      const s = movs[k]; if (!conta(s)) return;
       const nome = (u.empreendimento || '').replace('Ilha Pura - ', '');
       const lab = u.bloco_destaque ? nome + ' · Torre ' + u.bloco + ' ★' : nome;
-      if (!m[lab]) m[lab] = { res: 0, ven: 0, neg: 0, tot: 0, dest: !!u.bloco_destaque };
+      if (!m[lab]) m[lab] = { and: 0, fec: 0, tot: 0, dest: !!u.bloco_destaque };
       m[lab].tot++;
-      if (ehVenda(s)) m[lab].ven++; else if (ehReserva(s)) m[lab].res++; else m[lab].neg++;
+      if (g2(s)) m[lab].fec++; else m[lab].and++;
     });
-    return Object.keys(m).sort((a, b) => (b === a ? 0 : (m[b].dest - m[a].dest)) || m[b].tot - m[a].tot)
-      .map(k => [k, m[k]]);
-  }, [movs, uMap]);
+    return Object.keys(m).sort((a, b) => (m[b].dest - m[a].dest) || (m[b].tot - m[a].tot)).map(k => [k, m[k]]);
+  }, [movs, uMap, com]);
 
-  // ---- Ranking por imobiliaria ----
+  // ---- RANKING POR IMOBILIÁRIA (com equipe e %) ----
   const rk = useMemo(() => {
     const m = {};
     chaves.forEach(k => {
       const u = uMap[k]; if (!u) return;
-      const s = movs[k];
-      if (!ehVenda(s) && !ehReserva(s) && !ehNegoc(s)) return;
+      const s = movs[k]; if (!conta(s)) return;
       const d = com[u.id] || {};
       const i = (d.imobiliaria || '').trim() || '(sem imobiliária)';
-      if (!m[i]) m[i] = { res: 0, ven: 0, neg: 0, tot: 0 };
+      if (!m[i]) m[i] = { and: 0, fec: 0, tot: 0, eq: equipeDe(d.imobiliaria) };
       m[i].tot++;
-      if (ehVenda(s)) m[i].ven++; else if (ehReserva(s)) m[i].res++; else m[i].neg++;
+      if (g2(s)) m[i].fec++; else m[i].and++;
     });
     return m;
   }, [movs, uMap, com]);
@@ -171,17 +199,26 @@ export default function Indicadores() {
   }
   function baixarRanking() {
     if (!ordIm.length) { alert('Sem movimentação no período.'); return; }
-    const l = ['Posicao;Imobiliaria;Reservas;Vendas;Em negociacao;Total'];
-    ordIm.forEach((i, n) => l.push([n + 1, i, rk[i].res, rk[i].ven, rk[i].neg, rk[i].tot].join(';')));
+    const l = ['Posicao;Imobiliaria;Equipe;Em negociacao+Reserva;% and;Vendido+Pix;% fec;Total;% do total'];
+    ordIm.forEach((i, n) => l.push([n + 1, i, rk[i].eq, rk[i].and, pct(rk[i].and, rk[i].tot) + '%',
+      rk[i].fec, pct(rk[i].fec, rk[i].tot) + '%', rk[i].tot, pct(rk[i].tot, totPer.total) + '%'].join(';')));
     csv('Ranking_' + wk[0] + '_a_' + wk[1] + '.csv', l);
   }
+  function baixarEquipes() {
+    if (!porEquipe.length) { alert('Sem movimentação no período.'); return; }
+    const l = ['Equipe;Em negociacao+Reserva;% and;Vendido+Pix;% fec;Total;% do total'];
+    porEquipe.forEach(([e, v]) => l.push([e, v.and, pct(v.and, v.tot) + '%', v.fec,
+      pct(v.fec, v.tot) + '%', v.tot, pct(v.tot, totPer.total) + '%'].join(';')));
+    csv('Equipes_' + wk[0] + '_a_' + wk[1] + '.csv', l);
+  }
   function baixarVendas() {
-    const l = ['Empreendimento;Bloco;Unidade;Andar;Tipologia;m2;Status no periodo;Cliente;ID Reserva;Corretor;Imobiliaria;Gerente;Hora da reserva (Brasilia)'];
+    const l = ['Empreendimento;Bloco;Unidade;Andar;Tipologia;m2;Status no periodo;Grupo;Equipe;Cliente;ID Reserva;Corretor;Imobiliaria;Gerente;Hora da reserva (Brasilia)'];
     chaves.forEach(k => {
       const u = uMap[k]; if (!u) return;
-      const s = movs[k]; if (!ehVenda(s) && !ehReserva(s) && !ehNegoc(s)) return;
+      const s = movs[k]; if (!conta(s)) return;
       const d = com[u.id] || {};
       l.push([u.empreendimento, u.bloco, u.unidade_num, u.andar, u.tipologia || '', u.m2, s,
+        g2(s) ? 'Vendido/Pix' : 'Negociacao/Reserva', equipeDe(d.imobiliaria),
         d.cliente || '', d.id_proposta || '', d.corretor || '', d.imobiliaria || '', d.gerencia || '',
         d.hora_reserva ? fmtBR(d.hora_reserva, true) : ''].join(';'));
     });
@@ -194,9 +231,19 @@ export default function Indicadores() {
 
   const kpi = (n, l, d) => <div className={'kpi' + (d ? ' dest' : '')} key={l}>
     <div className="n">{n}</div><div className="l">{l}</div></div>;
-  const bar = (l, v, t, c) => <div className="b-row" key={l}><div className="lab">{l}</div>
-    <div className="track"><div className="fillb" style={{ width: (t ? Math.round(v / t * 100) : 0) + '%', background: c || '#2d6cdf' }} /></div>
-    <div style={{ width: 70, textAlign: 'right' }}>{v}</div></div>;
+
+  // barra dupla: parte azul = negociação/reserva, parte vermelha = vendido/pix
+  const barra = (lab, v, extra) => (
+    <div className="b-row" key={lab}>
+      <div className="lab">{lab}</div>
+      <div className="track">
+        <div className="fillb" style={{ width: pct(v.and, totPer.total) + '%', background: '#f9a825', float: 'left' }} />
+        <div className="fillb" style={{ width: pct(v.fec, totPer.total) + '%', background: '#b71c1c', float: 'left' }} />
+      </div>
+      <div style={{ width: 96, textAlign: 'right' }}>{v.tot} ({pct(v.tot, totPer.total)}%)</div>
+      {extra}
+    </div>
+  );
 
   return (
     <div className="wrap">
@@ -210,44 +257,82 @@ export default function Indicadores() {
           <button className="sm" onClick={() => setWk(semana())}>Fim de semana atual</button>
           <button className="sm" onClick={() => setWk(['2000-01-01', '2099-12-31'])}>Considerar tudo</button>
         </div>
-        <div className="hint">Contabiliza apenas reservas, vendas e negociações entre {dBR(wk[0])} e {dBR(wk[1])}.</div>
+        <div className="hint">
+          <b style={{ color: '#f9a825' }}>Em negociação + Reserva</b> = {G_NEG_RES.join(', ')}.
+          &nbsp;<b style={{ color: '#e05656' }}>Vendido + Pix</b> = {G_VEN_PIX.join(', ')}.
+        </div>
         {!chaves.length && aud.length > 0 &&
           <div className="hint" style={{ color: '#e0a000' }}>⚠ Nenhuma movimentação neste período — há {aud.length} alteração(ões) fora dele.</div>}
       </div>
 
-      {/* ---------- FOCO: LANÇAMENTO ---------- */}
+      {/* ---------- LANÇAMENTO ---------- */}
       <div className="card" style={{ borderColor: '#f9a825' }}>
         <h4>🚀 LANÇAMENTO — {nomeGaia}</h4>
         <div className="kpis">
-          {kpi(gTot, 'Total negociado no período', true)}
-          {kpi(gRes, 'Reservadas', true)}
-          {kpi(gVen, 'Vendidas', true)}
-          {kpi(gNeg, 'Em negociação', true)}
+          {kpi(gTot, 'Total negociado', true)}
+          {kpi(gAnd + ' · ' + pct(gAnd, gTot) + '%', 'Em negociação + Reserva', true)}
+          {kpi(gFec + ' · ' + pct(gFec, gTot) + '%', 'Vendido + Pix Validado', true)}
           {kpi(gaia.filter(u => u.status === 'Disponível').length, 'Disponíveis agora', true)}
-          {kpi(gaia.length ? Math.round(gTot / gaia.length * 100) + '%' : '0%', 'Da torre (' + gaia.length + ' un.)', true)}
+          {kpi(pct(gTot, gaia.length) + '%', 'Da torre (' + gaia.length + ' un.)', true)}
         </div>
       </div>
 
-      {/* ---------- PERÍODO: TODOS OS EMPREENDIMENTOS ---------- */}
+      {/* ---------- TOTAL DO PERÍODO ---------- */}
       <div className="card">
-        <h4>Movimentação no período — todos os empreendimentos Ilha Pura</h4>
+        <h4>Movimentação no período — todos os empreendimentos</h4>
         <div className="kpis">
-          {kpi(totPer.total, 'Total (reservas + vendas + negociação)')}
-          {kpi(totPer.res, 'Reservadas')}
-          {kpi(totPer.ven, 'Vendidas')}
-          {kpi(totPer.neg, 'Em negociação')}
+          {kpi(totPer.total, 'Total no período')}
+          {kpi(totPer.and + ' · ' + pct(totPer.and, totPer.total) + '%', 'Em negociação + Reserva')}
+          {kpi(totPer.fec + ' · ' + pct(totPer.fec, totPer.total) + '%', 'Vendido + Pix Validado')}
         </div>
+      </div>
+
+      {/* ---------- POR EQUIPE ---------- */}
+      <div className="card">
+        <h4>👥 Desempenho por equipe</h4>
+        {!porEquipe.length ? <div className="hint">Nenhuma movimentação no período.</div> : <>
+          <table>
+            <thead><tr><th>Equipe</th><th>Negoc. + Reserva</th><th>%</th><th>Vendido + Pix</th><th>%</th><th>Total</th><th>% do total</th></tr></thead>
+            <tbody>
+              {porEquipe.map(([e, v]) => (
+                <tr key={e}>
+                  <td><span className="badge" style={{ background: COR_EQ[e] || '#555', color: '#fff' }}>{e}</span></td>
+                  <td>{v.and}</td><td>{pct(v.and, v.tot)}%</td>
+                  <td>{v.fec}</td><td>{pct(v.fec, v.tot)}%</td>
+                  <td><b>{v.tot}</b></td><td><b>{pct(v.tot, totPer.total)}%</b></td>
+                </tr>))}
+              <tr style={{ background: '#20262e' }}>
+                <td><b>TOTAL</b></td><td><b>{totPer.and}</b></td><td><b>{pct(totPer.and, totPer.total)}%</b></td>
+                <td><b>{totPer.fec}</b></td><td><b>{pct(totPer.fec, totPer.total)}%</b></td>
+                <td><b>{totPer.total}</b></td><td><b>100%</b></td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="hint" style={{ marginTop: 8 }}>
+            Plantonistas: Sawala, Somma Rio, PTM Consultoria e Lopes RJ · IP Vendas: IP Vendas · Parceria: demais imobiliárias.
+          </div>
+          <div style={{ marginTop: 10 }}><button className="sm" onClick={baixarEquipes}>⬇ Baixar equipes (Excel/CSV)</button></div>
+        </>}
+      </div>
+
+      {/* ---------- POR EMPREENDIMENTO ---------- */}
+      <div className="card">
+        <h4>Por empreendimento</h4>
         {!porEmp.length ? <div className="hint">Nenhuma movimentação no período.</div> : <>
           <table>
-            <thead><tr><th>Empreendimento</th><th>Reservas</th><th>Vendas</th><th>Negoc.</th><th>Total</th></tr></thead>
+            <thead><tr><th>Empreendimento</th><th>Negoc. + Reserva</th><th>%</th><th>Vendido + Pix</th><th>%</th><th>Total</th></tr></thead>
             <tbody>
               {porEmp.map(([l, v]) => (
                 <tr key={l} style={v.dest ? { background: '#1a1710' } : null}>
-                  <td><b>{l}</b></td><td>{v.res}</td><td>{v.ven}</td><td>{v.neg}</td><td><b>{v.tot}</b></td>
+                  <td><b>{l}</b></td>
+                  <td>{v.and}</td><td>{pct(v.and, v.tot)}%</td>
+                  <td>{v.fec}</td><td>{pct(v.fec, v.tot)}%</td>
+                  <td><b>{v.tot}</b></td>
                 </tr>))}
               <tr style={{ background: '#20262e' }}>
-                <td><b>TOTAL</b></td><td><b>{totPer.res}</b></td><td><b>{totPer.ven}</b></td>
-                <td><b>{totPer.neg}</b></td><td><b>{totPer.total}</b></td>
+                <td><b>TOTAL</b></td><td><b>{totPer.and}</b></td><td><b>{pct(totPer.and, totPer.total)}%</b></td>
+                <td><b>{totPer.fec}</b></td><td><b>{pct(totPer.fec, totPer.total)}%</b></td>
+                <td><b>{totPer.total}</b></td>
               </tr>
             </tbody>
           </table>
@@ -257,15 +342,20 @@ export default function Indicadores() {
         </>}
       </div>
 
+      {/* ---------- RANKING POR IMOBILIÁRIA ---------- */}
       <div className="card">
         <h4>🏆 Ranking por imobiliária <span className="hint">({dBR(wk[0])} a {dBR(wk[1])})</span></h4>
         {!ordIm.length ? <div className="hint">Nenhuma movimentação no período.</div> : <>
           <table>
-            <thead><tr><th>#</th><th>Imobiliária</th><th>Reservas</th><th>Vendas</th><th>Negoc.</th><th>Total</th></tr></thead>
-            <tbody>{ordIm.slice(0, 25).map((i, n) => (
+            <thead><tr><th>#</th><th>Imobiliária</th><th>Equipe</th><th>Negoc. + Reserva</th><th>%</th><th>Vendido + Pix</th><th>%</th><th>Total</th><th>% do total</th></tr></thead>
+            <tbody>{ordIm.slice(0, 30).map((i, n) => (
               <tr key={i}>
                 <td>{n === 0 ? '🥇' : n === 1 ? '🥈' : n === 2 ? '🥉' : n + 1}</td>
-                <td><b>{i}</b></td><td>{rk[i].res}</td><td>{rk[i].ven}</td><td>{rk[i].neg}</td><td><b>{rk[i].tot}</b></td>
+                <td><b>{i}</b></td>
+                <td><span className="badge" style={{ background: COR_EQ[rk[i].eq] || '#555', color: '#fff' }}>{rk[i].eq}</span></td>
+                <td>{rk[i].and}</td><td>{pct(rk[i].and, rk[i].tot)}%</td>
+                <td>{rk[i].fec}</td><td>{pct(rk[i].fec, rk[i].tot)}%</td>
+                <td><b>{rk[i].tot}</b></td><td>{pct(rk[i].tot, totPer.total)}%</td>
               </tr>))}
             </tbody>
           </table>
