@@ -1,14 +1,54 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { IMOBILIARIAS, CORRETORES, CORRETOR_IMOB } from '../../lib/imobiliarias';
 
 const LS = 'ip_operador_prefs';
-function agoraLocal() {
-  const d = new Date(), p = n => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+const TZ = 'America/Sao_Paulo';
+
+// Data/hora ATUAL de Brasilia no formato do campo (YYYY-MM-DDTHH:MM),
+// independente do fuso configurado no computador do operador.
+function agoraBR() {
+  const f = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  return f.format(new Date()).replace(' ', 'T').slice(0, 16);
 }
+
+// Converte o que o operador digitou (horario de Brasilia) para o
+// instante correto a ser gravado no banco (com fuso explicito).
+function paraISO(local) {
+  if (!local) return null;
+  const [d, h] = String(local).split('T');
+  if (!d || !h) return null;
+  const [Y, M, D] = d.split('-').map(Number);
+  const [hh, mm] = h.split(':').map(Number);
+  // descobre o deslocamento de Brasilia naquela data (-03:00)
+  const teste = new Date(Date.UTC(Y, M - 1, D, hh, mm));
+  const emBR = new Date(teste.toLocaleString('en-US', { timeZone: TZ }));
+  const emUTC = new Date(teste.toLocaleString('en-US', { timeZone: 'UTC' }));
+  const offMin = Math.round((emUTC - emBR) / 60000);
+  const sinal = offMin >= 0 ? '-' : '+';
+  const abs = Math.abs(offMin);
+  const oh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const om = String(abs % 60).padStart(2, '0');
+  return `${d}T${h}:00${sinal}${oh}:${om}`;
+}
+
+// Mostra um instante do banco no horario de Brasilia (para o campo do form)
+function paraCampo(iso) {
+  if (!iso) return '';
+  const f = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
+  return f.format(new Date(iso)).replace(' ', 'T').slice(0, 16);
+}
+
 function prefs() { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } }
-// "2 Qtos. Double Suíte" -> "2Q DS"  |  "3 Qtos." -> "3Q"
+
+// "2 Qtos. Double Suite" -> "2Q DS"  |  "3 Qtos." -> "3Q"
 function tipoCurto(t) {
   let s = (t || '').trim();
   if (!s || /^apartamento$/i.test(s)) return '';
@@ -36,12 +76,18 @@ function Nav({ email, onSair, atual }) {
   );
 }
 
+const VAZIO = {
+  cliente: '', idProposta: '', imobiliaria: '', corretor: '',
+  gerencia: '', hora_reserva: '', justificativa: ''
+};
+
 export default function Painel() {
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [units, setUnits] = useState([]);
   const [statuses, setStatuses] = useState([]);
+  const [com, setCom] = useState({});
   const [emp, setEmp] = useState(null);
   const [bloco, setBloco] = useState('TODOS');
   const [busca, setBusca] = useState('');
@@ -58,7 +104,6 @@ export default function Painel() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // Busca paginada: a API do Supabase devolve no maximo 1000 linhas por chamada
   async function fetchAll(view, order) {
     const PAGE = 1000; let from = 0; let out = [];
     while (true) {
@@ -77,10 +122,15 @@ export default function Painel() {
     const data = await fetchAll('vw_operador', 'chave');
     setUnits(data || []);
     const { data: st } = await supabase.from('status').select('*').order('ordem');
-    const uniq = []; const seen = new Set();
+    const seen = new Set(); const uniq = [];
     (st || []).forEach(s => { if (!seen.has(s.nome)) { seen.add(s.nome); uniq.push(s); } });
     setStatuses(uniq);
+    // dados comerciais ja registrados (para reabrir a reserva preenchida)
+    const dc = await fetchAll('dado_comercial', 'unidade_id');
+    const m = {}; (dc || []).forEach(d => { m[d.unidade_id] = d; });
+    setCom(m);
   }
+
   useEffect(() => {
     if (!session) return;
     load();
@@ -92,16 +142,28 @@ export default function Painel() {
 
   const empreendimentos = useMemo(() => {
     const m = new Map();
-    units.forEach(u => { if (!m.has(u.emp_slug)) m.set(u.emp_slug, { slug: u.emp_slug, nome: u.empreendimento, ordem: u.emp_ordem, n: 0, livres: 0 }); const o = m.get(u.emp_slug); o.n++; if (u.status === 'Disponível') o.livres++; });
+    units.forEach(u => {
+      if (!m.has(u.emp_slug)) m.set(u.emp_slug, { slug: u.emp_slug, nome: u.empreendimento, ordem: u.emp_ordem, n: 0, livres: 0 });
+      const o = m.get(u.emp_slug); o.n++; if (u.status === 'Disponível') o.livres++;
+    });
     return [...m.values()].sort((a, b) => a.ordem - b.ordem);
   }, [units]);
 
-  useEffect(() => { if (!emp && empreendimentos.length) setEmp(empreendimentos.find(e => e.slug === 'astra')?.slug || empreendimentos[0].slug); }, [empreendimentos, emp]);
+  useEffect(() => {
+    if (!emp && empreendimentos.length) {
+      const astra = empreendimentos.filter(e => e.slug === 'astra')[0];
+      setEmp(astra ? astra.slug : empreendimentos[0].slug);
+    }
+  }, [empreendimentos, emp]);
 
   const doEmp = useMemo(() => units.filter(u => u.emp_slug === emp), [units, emp]);
+
   const blocos = useMemo(() => {
     const m = new Map();
-    doEmp.forEach(u => { if (!m.has(u.bloco)) m.set(u.bloco, { nome: u.bloco, num: u.bloco_num, destaque: u.bloco_destaque, n: 0, livres: 0 }); const o = m.get(u.bloco); o.n++; if (u.status === 'Disponível') o.livres++; });
+    doEmp.forEach(u => {
+      if (!m.has(u.bloco)) m.set(u.bloco, { nome: u.bloco, num: u.bloco_num, destaque: u.bloco_destaque, n: 0, livres: 0 });
+      const o = m.get(u.bloco); o.n++; if (u.status === 'Disponível') o.livres++;
+    });
     return [...m.values()].sort((a, b) => (b.destaque - a.destaque) || (a.num - b.num));
   }, [doEmp]);
 
@@ -123,16 +185,44 @@ export default function Painel() {
     if (error) setMsg({ t: 'err', m: 'Falha no login: ' + error.message });
   }
 
-  function abrir(u, statusSugerido) {
+  // Abre a unidade JA PREENCHIDA com o que estiver gravado.
+  // Se nunca houve reserva, usa as preferencias do operador.
+  function abrir(u) {
+    const d = com[u.id] || {};
     const p = prefs();
+    const temReserva = !!(d.cliente || d.corretor || d.imobiliaria || d.id_proposta);
     setMsg(null);
     setEditing(u);
     setForm({
-      novo_status: statusSugerido || u.status,
-      cliente: '', idProposta: '', imobiliaria: p.imobiliaria || '', corretor: p.corretor || '',
-      gerencia: p.gerencia || '',
-      hora_reserva: agoraLocal(), justificativa: '', confirma: false, versao: u.versao
+      novo_status: u.status,
+      cliente: d.cliente || '',
+      idProposta: d.id_proposta || '',
+      imobiliaria: d.imobiliaria || (temReserva ? '' : (p.imobiliaria || '')),
+      corretor: d.corretor || (temReserva ? '' : (p.corretor || '')),
+      gerencia: d.gerencia || (temReserva ? '' : (p.gerencia || '')),
+      hora_reserva: d.hora_reserva ? paraCampo(d.hora_reserva) : agoraBR(),
+      justificativa: '',
+      versao: u.versao
     });
+  }
+
+  // Ao escolher um corretor conhecido, preenche a imobiliaria dele.
+  // Se o operador ja tiver digitado outra imobiliaria, respeita o que esta la.
+  function escolherCorretor(nome) {
+    setForm(f => {
+      const imob = CORRETOR_IMOB[nome];
+      const antiga = CORRETOR_IMOB[f.corretor];
+      const podeTrocar = !f.imobiliaria || f.imobiliaria === antiga;
+      return Object.assign({}, f, {
+        corretor: nome,
+        imobiliaria: (imob && podeTrocar) ? imob : f.imobiliaria
+      });
+    });
+  }
+
+  function limpar() {
+    setForm(f => Object.assign({}, f, VAZIO, { hora_reserva: agoraBR() }));
+    setMsg({ t: 'ok', m: 'Campos limpos. Preencha os novos dados e salve.' });
   }
 
   async function salvar() {
@@ -145,9 +235,9 @@ export default function Painel() {
       p_comercial: {
         cliente: form.cliente, idProposta: form.idProposta,
         imobiliaria: form.imobiliaria, corretor: form.corretor,
-        gerencia: form.gerencia, hora_reserva: form.hora_reserva
+        gerencia: form.gerencia, hora_reserva: paraISO(form.hora_reserva)
       },
-      p_confirma: form.confirma,
+      p_confirma: true,
       p_justificativa: form.justificativa,
       p_origem: 'Painel Web'
     });
@@ -155,7 +245,7 @@ export default function Painel() {
     if (error) { setMsg({ t: 'err', m: error.message }); return; }
     if (data && data.ok) {
       localStorage.setItem(LS, JSON.stringify({ corretor: form.corretor, imobiliaria: form.imobiliaria, gerencia: form.gerencia }));
-      setMsg({ t: 'ok', m: `${editing.chave} → ${data.status}` });
+      setMsg({ t: 'ok', m: `${editing.bloco} ${editing.unidade_num} → ${data.status}` });
       setEditing(null);
       load();
     } else setMsg({ t: 'err', m: (data && data.msg) || 'Operação rejeitada' });
@@ -178,6 +268,8 @@ export default function Painel() {
   }
 
   const andares = [...new Set(filtrados.map(u => u.andar))].sort((a, b) => b - a);
+  const dEdit = editing ? (com[editing.id] || {}) : {};
+  const temReserva = !!(dEdit.cliente || dEdit.corretor || dEdit.imobiliaria || dEdit.id_proposta);
 
   return (
     <div className="wrap">
@@ -188,7 +280,7 @@ export default function Painel() {
         {empreendimentos.map(e => (
           <button key={e.slug} className={'chip' + (emp === e.slug ? ' on' : '')}
             onClick={() => { setEmp(e.slug); setBloco('TODOS'); }}>
-            {e.nome.replace('Ilha Pura - ', '')} <i>{e.livres} livres</i>
+            {(e.nome || '').replace('Ilha Pura - ', '')} <i>{e.livres} livres</i>
           </button>
         ))}
       </div>
@@ -254,34 +346,57 @@ export default function Painel() {
         <div className="modal" onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}>
           <div className="box">
             <h3>{editing.bloco} · Unidade {editing.unidade_num}</h3>
-            <div className="muted">{editing.empreendimento} · {editing.andar}º andar · {editing.m2}m² · atual: {editing.status}</div>
+            <div className="muted">
+              {editing.empreendimento} · {editing.andar}º andar · {editing.tipologia || ''} · {editing.m2}m² · atual: {editing.status}
+            </div>
+            {temReserva && <div className="msg ok" style={{ marginTop: 8 }}>
+              Reserva já registrada — os campos abaixo estão preenchidos com os dados atuais.
+            </div>}
             {msg && <div className={'msg ' + (msg.t === 'ok' ? 'ok' : 'err')}>{msg.m}</div>}
 
             <div className="quick">
               {['Reservada', 'Em Negociação', 'Pix Validado', 'Vendido', 'Disponível'].map(s => (
                 <button key={s} className={'chip' + (form.novo_status === s ? ' on' : '')}
                   style={{ borderColor: cor(s).cor_fundo }}
-                  onClick={() => setForm({ ...form, novo_status: s })}>{s}</button>
+                  onClick={() => setForm(Object.assign({}, form, { novo_status: s }))}>{s}</button>
               ))}
             </div>
 
             <div className="form">
               <label>Status
-                <select value={form.novo_status} onChange={e => setForm({ ...form, novo_status: e.target.value })}>
+                <select value={form.novo_status} onChange={e => setForm(Object.assign({}, form, { novo_status: e.target.value }))}>
                   {statuses.map(s => <option key={s.nome}>{s.nome}</option>)}
                 </select>
               </label>
-              <label>Cliente<input autoFocus value={form.cliente} onChange={e => setForm({ ...form, cliente: e.target.value })} /></label>
-              <label>ID da reserva / proposta<input value={form.idProposta} placeholder="Ex.: PRP-1001" onChange={e => setForm({ ...form, idProposta: e.target.value })} /></label>
-              <label>Corretor<input value={form.corretor} onChange={e => setForm({ ...form, corretor: e.target.value })} /></label>
-              <label>Imobiliária<input value={form.imobiliaria} onChange={e => setForm({ ...form, imobiliaria: e.target.value })} /></label>
-              <label>Gerente<input value={form.gerencia} onChange={e => setForm({ ...form, gerencia: e.target.value })} /></label>
-              <label>Hora da reserva<input type="datetime-local" value={form.hora_reserva} onChange={e => setForm({ ...form, hora_reserva: e.target.value })} /></label>
-              <label>Justificativa<input value={form.justificativa} onChange={e => setForm({ ...form, justificativa: e.target.value })} /></label>
-              <label className="tg"><input type="checkbox" checked={form.confirma} onChange={e => setForm({ ...form, confirma: e.target.checked })} /> Confirmar ação crítica</label>
+              <label>Cliente<input autoFocus value={form.cliente} onChange={e => setForm(Object.assign({}, form, { cliente: e.target.value }))} /></label>
+              <label>ID da reserva / proposta<input value={form.idProposta} placeholder="Ex.: PRP-1001"
+                onChange={e => setForm(Object.assign({}, form, { idProposta: e.target.value }))} /></label>
+              <label>Corretor
+                <input list="lista-corr" placeholder="Digite para buscar ou escreva"
+                  value={form.corretor} onChange={e => escolherCorretor(e.target.value)} />
+                <datalist id="lista-corr">
+                  {CORRETORES.map(n => <option key={n} value={n} />)}
+                </datalist>
+              </label>
+              <label className="full">Imobiliária
+                <input list="lista-imob" placeholder="Digite para buscar ou escreva uma nova"
+                  value={form.imobiliaria} onChange={e => setForm(Object.assign({}, form, { imobiliaria: e.target.value }))} />
+                <datalist id="lista-imob">
+                  {IMOBILIARIAS.map(n => <option key={n} value={n} />)}
+                </datalist>
+              </label>
+              <label>Gerente<input value={form.gerencia} onChange={e => setForm(Object.assign({}, form, { gerencia: e.target.value }))} /></label>
+              <label>Hora da reserva (Brasília)<input type="datetime-local" value={form.hora_reserva}
+                onChange={e => setForm(Object.assign({}, form, { hora_reserva: e.target.value }))} /></label>
+              <label className="full">Justificativa (opcional)<input value={form.justificativa}
+                onChange={e => setForm(Object.assign({}, form, { justificativa: e.target.value }))} /></label>
             </div>
-            <button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</button>{' '}
-            <button className="sm" onClick={() => setEditing(null)}>Fechar</button>
+
+            <div className="bar" style={{ justifyContent: 'flex-end' }}>
+              <button className="sm" style={{ background: '#5a3030' }} onClick={limpar}>Limpar dados</button>
+              <button className="sm" style={{ background: '#20262e' }} onClick={() => setEditing(null)}>Fechar</button>
+              <button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</button>
+            </div>
           </div>
         </div>
       )}
