@@ -372,7 +372,7 @@ export default function Painel() {
       )}
 
       {editing && (
-        <div className="modal" onClick={e => { if (e.target === e.currentTarget) setEditing(null); }}>
+        <div className="modal">
           <div className="box">
             <h3>{editing.bloco} · Unidade {editing.unidade_num}</h3>
             <div className="muted">
