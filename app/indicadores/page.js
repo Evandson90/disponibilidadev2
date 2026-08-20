@@ -321,7 +321,10 @@ export default function Indicadores() {
 
   const porEquipe = useMemo(() => {
     const m = agrupa((u, d) => equipeDe(d.imobiliaria));
-    return Object.keys(m).sort((a, b) => (ORDEM_EQ[a] || 9) - (ORDEM_EQ[b] || 9)).map(k => [k, m[k]]);
+    // Ordena pelo que realmente importa: VENDAS. Depois total, depois nome.
+    return Object.keys(m).sort((a, b) =>
+      (m[b].ven - m[a].ven) || (m[b].tot - m[a].tot) || ((ORDEM_EQ[a] || 9) - (ORDEM_EQ[b] || 9))
+    ).map(k => [k, m[k]]);
   }, [movs, uMap, com]);
 
   const porEmp = useMemo(() => {
@@ -333,11 +336,16 @@ export default function Indicadores() {
   }, [movs, uMap, com]);
 
   const rk = useMemo(() => agrupa((u, d) => nomeImob(d.imobiliaria) || '(sem imobiliária)'), [movs, uMap, com]);
-  const ordIm = Object.keys(rk).sort((a, b) => (rk[b].ven - rk[a].ven) || (rk[b].tot - rk[a].tot));
+  // Peso maior nas VENDAS: desempata por reservas, depois negociacao, depois total.
+  const ordIm = Object.keys(rk).sort((a, b) =>
+    (rk[b].ven - rk[a].ven) || (rk[b].res - rk[a].res) ||
+    (rk[b].neg - rk[a].neg) || (rk[b].tot - rk[a].tot));
 
   const porCorretor = useMemo(() => {
     const m = agrupa((u, d) => (d.corretor || '').trim() || null);
-    return Object.keys(m).sort((a, b) => (m[b].ven - m[a].ven) || (m[b].tot - m[a].tot)).slice(0, 10).map(k => [k, m[k]]);
+    return Object.keys(m).sort((a, b) =>
+      (m[b].ven - m[a].ven) || (m[b].res - m[a].res) || (m[b].tot - m[a].tot)
+    ).slice(0, 10).map(k => [k, m[k]]);
   }, [movs, uMap, com]);
 
   // ---- ritmo por hora (vendas) ----
@@ -362,6 +370,7 @@ export default function Indicadores() {
   }, [altPeriodo]);
 
   const maxBarra = Math.max(1, ...porEmp.map(x => x[1].tot), ...porEquipe.map(x => x[1].tot));
+  const maxVenda = Math.max(1, ...porEquipe.map(x => x[1].ven));
 
   // ===================== EXPORTAÇÕES =====================
   function csv(nome, linhas) {
@@ -405,15 +414,15 @@ export default function Indicadores() {
 
   function baixarRanking() {
     if (!ordIm.length) { alert('Sem movimentação no período.'); return; }
-    const l = ['Posicao;Imobiliaria;Equipe;Vendas;% vendas;Reservas;Em negociacao;Outros;Total'];
-    ordIm.forEach((i, n) => l.push([n + 1, i, rk[i].eq, rk[i].ven, pct(rk[i].ven, rk[i].tot) + '%',
+    const l = ['Posicao;Imobiliaria;Equipe;Vendas;% das vendas;Reservas;Em negociacao;Outros;Total'];
+    ordIm.forEach((i, n) => l.push([n + 1, i, rk[i].eq, rk[i].ven, pct(rk[i].ven, tot.ven) + '%',
       rk[i].res, rk[i].neg, rk[i].out, rk[i].tot].map(esc).join(';')));
     csv('Ranking_Imobiliarias_' + wk[0] + '_a_' + wk[1] + '.csv', l);
   }
   function baixarEquipes() {
     if (!porEquipe.length) { alert('Sem movimentação no período.'); return; }
-    const l = ['Equipe;Vendas;% vendas;Reservas;Em negociacao;Outros;Total'];
-    porEquipe.forEach(([e, v]) => l.push([e, v.ven, pct(v.ven, v.tot) + '%', v.res, v.neg, v.out, v.tot].map(esc).join(';')));
+    const l = ['Posicao;Equipe;Vendas;% das vendas;Reservas;Em negociacao;Outros;Total'];
+    porEquipe.forEach(([e, v], i) => l.push([i + 1, e, v.ven, pct(v.ven, tot.ven) + '%', v.res, v.neg, v.out, v.tot].map(esc).join(';')));
     csv('Equipes_' + wk[0] + '_a_' + wk[1] + '.csv', l);
   }
 
@@ -511,21 +520,31 @@ export default function Indicadores() {
       <div className="card">
         <h4>👥 Desempenho por equipe</h4>
         {!porEquipe.length ? <div className="hint">Nenhuma movimentação no período.</div> : <>
-          {porEquipe.map(([e, v]) => (
-            <BarraEmp key={e} lab={e} neg={v.neg} res={v.res} ven={v.ven} max={maxBarra}
-              extra={<span className="badge" style={{ background: COR_EQ[e] || '#555', color: '#fff', marginLeft: 8 }}>{v.ven} vendas</span>} />
+          {porEquipe.map(([e, v], i) => (
+            <div className="b-row" key={e}>
+              <div style={{ width: 26, fontSize: 16 }}>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : ''}</div>
+              <div className="lab">{e}</div>
+              <div className="track" style={{ height: 18 }}>
+                <div style={{ width: pct(v.ven, maxVenda) + '%', background: '#c0392b', height: '100%', float: 'left' }} title={'Vendas: ' + v.ven} />
+              </div>
+              <b style={{ width: 92, textAlign: 'right', color: '#ffffff' }}>{v.ven} vendas</b>
+              <span className="muted" style={{ width: 46, textAlign: 'right' }}>{pct(v.ven, tot.ven)}%</span>
+            </div>
           ))}
+          <div className="hint" style={{ marginTop: 4 }}>Ordenado por vendas · a barra mostra o volume de vendas de cada equipe.</div>
           <table style={{ marginTop: 12 }}>
-            <thead><tr><th>Equipe</th><th>Vendas</th><th>% vendas</th><th>Reservas</th><th>Negociação</th><th>Outros</th><th>Total</th></tr></thead>
+            <thead><tr><th>#</th><th>Equipe</th><th>Vendas</th><th>% das vendas</th><th>Reservas</th><th>Negociação</th><th>Outros</th><th>Total</th></tr></thead>
             <tbody>
-              {porEquipe.map(([e, v]) => (
+              {porEquipe.map(([e, v], i) => (
                 <tr key={e}>
+                  <td>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</td>
                   <td><span className="badge" style={{ background: COR_EQ[e] || '#555', color: '#fff' }}>{e}</span></td>
-                  <td><b>{v.ven}</b></td><td>{pct(v.ven, v.tot)}%</td>
-                  <td>{v.res}</td><td>{v.neg}</td><td>{v.out}</td><td><b>{v.tot}</b></td>
+                  <td><b style={{ color: '#ffffff', fontSize: 15 }}>{v.ven}</b></td>
+                  <td><b>{pct(v.ven, tot.ven)}%</b></td>
+                  <td>{v.res}</td><td>{v.neg}</td><td>{v.out}</td><td>{v.tot}</td>
                 </tr>))}
               <tr style={{ background: '#20262e' }}>
-                <td><b>TOTAL</b></td><td><b>{tot.ven}</b></td><td><b>{pct(tot.ven, tot.mov)}%</b></td>
+                <td></td><td><b>TOTAL</b></td><td><b>{tot.ven}</b></td><td><b>100%</b></td>
                 <td><b>{tot.res}</b></td><td><b>{tot.neg}</b></td><td><b>{tot.out}</b></td><td><b>{tot.mov}</b></td>
               </tr>
             </tbody>
@@ -555,13 +574,14 @@ export default function Indicadores() {
         <h4>🏆 Ranking por imobiliária <span className="hint">(ordenado por vendas)</span></h4>
         {!ordIm.length ? <div className="hint">Nenhuma movimentação no período.</div> : <>
           <table>
-            <thead><tr><th>#</th><th>Imobiliária</th><th>Equipe</th><th>Vendas</th><th>%</th><th>Reservas</th><th>Negoc.</th><th>Total</th></tr></thead>
+            <thead><tr><th>#</th><th>Imobiliária</th><th>Equipe</th><th>Vendas</th><th>% das vendas</th><th>Reservas</th><th>Negoc.</th><th>Total</th></tr></thead>
             <tbody>{ordIm.slice(0, 30).map((i, n) => (
               <tr key={i}>
                 <td>{n === 0 ? '🥇' : n === 1 ? '🥈' : n === 2 ? '🥉' : n + 1}</td>
                 <td><b>{i}</b></td>
                 <td><span className="badge" style={{ background: COR_EQ[rk[i].eq] || '#555', color: '#fff' }}>{rk[i].eq}</span></td>
-                <td><b style={{ color: '#ffffff' }}>{rk[i].ven}</b></td><td>{pct(rk[i].ven, rk[i].tot)}%</td>
+                <td><b style={{ color: '#ffffff', fontSize: 15 }}>{rk[i].ven}</b></td>
+                <td><b>{pct(rk[i].ven, tot.ven)}%</b></td>
                 <td>{rk[i].res}</td><td>{rk[i].neg}</td><td><b>{rk[i].tot}</b></td>
               </tr>))}
             </tbody>
