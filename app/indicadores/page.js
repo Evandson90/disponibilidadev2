@@ -105,11 +105,11 @@ function Gauge({ valor, meta, titulo }) {
         {p > 0 && arco(p, cor, W)}
         <line x1={CX} y1={CY} x2={x} y2={y} stroke="#e8eef4" strokeWidth="3" />
         <circle cx={CX} cy={CY} r="7" fill="#e8eef4" />
-        <text x={CX} y={CY - 34} textAnchor="middle" fill={cor} fontSize="42" fontWeight="800">{valor}</text>
+        <text x={CX} y={CY - 34} textAnchor="middle" fill="#ffffff" fontSize="42" fontWeight="800">{valor}</text>
         <text x={CX} y={CY - 12} textAnchor="middle" fill="#9aa6b2" fontSize="14">de {meta}</text>
         <text x={CX - R} y={CY + 22} textAnchor="middle" fill="#7c8794" fontSize="11">0</text>
         <text x={CX + R} y={CY + 22} textAnchor="middle" fill="#7c8794" fontSize="11">{meta}</text>
-        <text x={CX} y={CY + 32} textAnchor="middle" fill={cor} fontSize="20" fontWeight="800">{pctReal}%</text>
+        <text x={CX} y={CY + 32} textAnchor="middle" fill="#ffffff" fontSize="20" fontWeight="800">{pctReal}%</text>
       </svg>
       <div className="muted" style={{ marginTop: -4 }}>{titulo}</div>
     </div>
@@ -143,7 +143,10 @@ function Donut({ dados, total }) {
       <div style={{ flex: 1, minWidth: 150 }}>
         {dados.filter(d => d.v > 0).map(d => (
           <div className="b-row" key={d.n}>
-            <i style={{ width: 12, height: 12, borderRadius: 3, background: d.c, display: 'inline-block', flex: '0 0 auto' }} />
+            <i style={{
+              width: 12, height: 12, borderRadius: 3, background: d.c, display: 'inline-block',
+              flex: '0 0 auto', border: '1px solid #4a5560'
+            }} />
             <div style={{ flex: 1, fontSize: 12 }}>{d.n}</div>
             <b style={{ fontSize: 12 }}>{d.v}</b>
             <span className="muted">{total > 0 ? Math.round(d.v / total * 100) : 0}%</span>
@@ -285,6 +288,14 @@ export default function Indicadores() {
     return Object.keys(m).sort((a, b) => m[b] - m[a]).map(k => [k, m[k]]);
   }, [movs]);
 
+  // cor usada em TEXTO (precisa ser legivel no fundo escuro).
+  // Bloqueada e preta nas TVs, mas em texto usamos cinza claro.
+  const CORS_TXT = {
+    'Bloqueada': '#b0bec5', 'Comodato': '#90a4ae', 'Vendido': '#ff8a80',
+    'Pix Validado': '#ff8a80', 'Reservada': '#82b1ff', 'Reservada c/ Recibão': '#82b1ff',
+    'Em validação': '#ce93d8', 'Em Negociação': '#ffd54f', 'Em Simulação': '#bcaaa4',
+    'Disponível': '#a5d6a7', 'Locada': '#80deea'
+  };
   const CORS = {
     'Vendido': '#b71c1c', 'Pix Validado': '#e53935', 'Reservada': '#1565c0',
     'Reservada c/ Recibão': '#0d47a1', 'Em validação': '#6a1b9a', 'Em Negociação': '#f9a825',
@@ -428,7 +439,7 @@ export default function Indicadores() {
             value={meta} onChange={e => setMeta(Math.max(1, parseInt(e.target.value, 10) || 1))} /></label>
         </div>
         <div className="hint">
-          <b style={{ color: '#e53935' }}>Venda</b> = Vendido + Pix Validado ·
+          <b style={{ color: '#e8eef4' }}>Venda</b> = Vendido + Pix Validado ·
           <b style={{ color: '#4a9eff' }}> Reserva</b> = Reservada ·
           <b style={{ color: '#f9a825' }}> Negociação</b> = Em Negociação ·
           <b style={{ color: '#9aa6b2' }}> Outros</b> = demais status (c/ Recibão, Em validação,
@@ -445,7 +456,7 @@ export default function Indicadores() {
           <Gauge valor={gVen} meta={meta} titulo={'Vendas confirmadas (Vendido + Pix Validado)'} />
           <div>
             <div className="kpis" style={{ marginBottom: 8 }}>
-              {kpi(gVen, 'Vendas', '#e53935', true)}
+              {kpi(gVen, 'Vendas', '#ffffff', true)}
               {kpi(Math.max(0, meta - gVen), 'Faltam p/ a meta', '#f9a825', true)}
               {kpi(pct(gVen, gaia.length) + '%', 'Da torre (' + gaia.length + ' un.)', '#e8eef4', true)}
             </div>
@@ -468,11 +479,11 @@ export default function Indicadores() {
       {/* ---------- VISÃO GERAL ---------- */}
       <div className="kpis">
         {kpi(tot.mov, 'Unidades movimentadas')}
-        {kpi(tot.ven, 'Vendas (Vendido + Pix)', '#e53935')}
+        {kpi(tot.ven, 'Vendas (Vendido + Pix)', '#ffffff')}
         {kpi(tot.res, 'Reservas', '#4a9eff')}
         {kpi(tot.neg, 'Em negociação', '#f9a825')}
         {kpi(tot.out, 'Outros status', '#9aa6b2')}
-        {kpi(pct(tot.ven, tot.mov) + '%', '% vendido do movimentado', '#e53935')}
+        {kpi(pct(tot.ven, tot.mov) + '%', '% vendido do movimentado', '#ffffff')}
       </div>
 
       <div className="cols2">
@@ -550,7 +561,7 @@ export default function Indicadores() {
                 <td>{n === 0 ? '🥇' : n === 1 ? '🥈' : n === 2 ? '🥉' : n + 1}</td>
                 <td><b>{i}</b></td>
                 <td><span className="badge" style={{ background: COR_EQ[rk[i].eq] || '#555', color: '#fff' }}>{rk[i].eq}</span></td>
-                <td><b style={{ color: '#e53935' }}>{rk[i].ven}</b></td><td>{pct(rk[i].ven, rk[i].tot)}%</td>
+                <td><b style={{ color: '#ffffff' }}>{rk[i].ven}</b></td><td>{pct(rk[i].ven, rk[i].tot)}%</td>
                 <td>{rk[i].res}</td><td>{rk[i].neg}</td><td><b>{rk[i].tot}</b></td>
               </tr>))}
             </tbody>
@@ -595,7 +606,7 @@ export default function Indicadores() {
       <div className="card">
         <h4>Últimas alterações <span className="hint">(horário de Brasília)</span></h4>
         {aud.slice(0, 15).map((a, i) => {
-          const c = CORS[a.status_novo] || '#607d8b';
+          const c = CORS_TXT[a.status_novo] || '#cfd8dc';
           return (
             <div className="b-row" key={i}>
               <span className="tag">{fmtBR(a.ts, true)}</span>
