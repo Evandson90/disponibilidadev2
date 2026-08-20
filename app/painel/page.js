@@ -48,6 +48,16 @@ function paraCampo(iso) {
 
 function prefs() { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } }
 
+// PTM CONSULTORIA IMOBILIARIA LTDA passa a se chamar PATRIMOVEL
+function semAcento(x) {
+  return String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+function nomeImob(n) {
+  const s = String(n || '').trim();
+  if (!s) return '';
+  return semAcento(s).indexOf('ptm consultoria') >= 0 ? 'PATRIMÓVEL' : s;
+}
+
 // "2 Qtos. Double Suite" -> "2Q DS"  |  "3 Qtos." -> "3Q"
 function tipoCurto(t) {
   let s = (t || '').trim();
@@ -75,6 +85,16 @@ function Nav({ email, onSair, atual }) {
     </div>
   );
 }
+
+// Lista exibida ao operador, ja com PTM renomeada e sem repetir
+const LISTA_IMOB = (function () {
+  const vistos = {}; const out = [];
+  IMOBILIARIAS.forEach(n => {
+    const x = nomeImob(n);
+    if (x && !vistos[x]) { vistos[x] = 1; out.push(x); }
+  });
+  return out.sort((a, b) => semAcento(a).localeCompare(semAcento(b)));
+})();
 
 const VAZIO = {
   cliente: '', idProposta: '', imobiliaria: '', corretor: '',
@@ -215,7 +235,7 @@ export default function Painel() {
       novo_status: u.status,
       cliente: d.cliente || '',
       idProposta: d.id_proposta || '',
-      imobiliaria: d.imobiliaria || (temReserva ? '' : (p.imobiliaria || '')),
+      imobiliaria: nomeImob(d.imobiliaria) || (temReserva ? '' : (p.imobiliaria || '')),
       corretor: d.corretor || (temReserva ? '' : (p.corretor || '')),
       gerencia: d.gerencia || (temReserva ? '' : (p.gerencia || '')),
       hora_reserva: d.hora_reserva ? paraCampo(d.hora_reserva) : agoraBR(),
@@ -239,7 +259,7 @@ export default function Painel() {
       const podeTrocar = !f.imobiliaria || f.imobiliaria === antiga;
       return Object.assign({}, f, {
         corretor: nome,
-        imobiliaria: (imob && podeTrocar) ? imob : f.imobiliaria,
+        imobiliaria: (imob && podeTrocar) ? nomeImob(imob) : f.imobiliaria,
         limpar: false
       });
     });
@@ -414,7 +434,7 @@ export default function Painel() {
                 <input list="lista-imob" placeholder="Digite para buscar ou escreva uma nova"
                   value={form.imobiliaria} onChange={e => up('imobiliaria', e.target.value)} />
                 <datalist id="lista-imob">
-                  {IMOBILIARIAS.map(n => <option key={n} value={n} />)}
+                  {LISTA_IMOB.map(n => <option key={n} value={n} />)}
                 </datalist>
               </label>
               <label>Gerente<input value={form.gerencia} onChange={e => up('gerencia', e.target.value)} /></label>
