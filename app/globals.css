@@ -132,3 +132,159 @@ button.sm{padding:5px 10px;font-size:12px}
 .b-row .track{flex:1;height:9px;background:#20262e;border-radius:6px;overflow:hidden}
 .b-row .fillb{height:100%;border-radius:6px}
 .tag{background:#20262e;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700}
+
+/* =====================================================================
+   ESPELHO NO CELULAR (ate 820px)
+   Em tela estreita, 3 torres lado a lado ficam ilegiveis.
+   Aqui as torres passam a ficar UMA ABAIXO DA OUTRA, com rolagem,
+   e tudo aumenta de tamanho para leitura na mao.
+   ===================================================================== */
+@media (max-width: 820px) {
+  .tv {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    padding: 8px;
+    gap: 10px;
+  }
+
+  .tv-head {
+    flex-wrap: wrap;
+    font-size: 15px;
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: #0f1216;
+    padding: 8px 4px;
+    border-bottom: 1px solid #2a323c;
+  }
+  .tv-head b { font-size: 16px; }
+  .tv-sub { font-size: 12px; }
+  .tvbtn { opacity: 1; padding: 8px 12px; font-size: 13px; }
+
+  /* torres empilhadas, uma embaixo da outra */
+  .tv-main {
+    display: block;
+    flex: none;
+  }
+  .tvtower {
+    display: block;
+    margin-bottom: 18px;
+  }
+  .tvtower h3 {
+    font-size: 17px;
+    padding: 10px;
+    position: sticky;
+    top: 52px;
+    z-index: 10;
+  }
+  .tagl { font-size: 11px; }
+
+  .tvfloors { display: block; }
+  .tvfloor {
+    display: flex;
+    margin-bottom: 6px;
+    min-height: 0;
+  }
+  .tvfl {
+    flex: 0 0 30px;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  /* celulas maiores e com respiro */
+  .tvcells { gap: 5px; }
+  .tvcell {
+    padding: 8px 3px;
+    border-radius: 7px;
+    min-height: 54px;
+    justify-content: center;
+  }
+  .tvcell b { font-size: 16px; }
+  .tvcell span { font-size: 10px; }
+  .tvcell .tvtip { font-size: 11px; }
+
+  /* legenda em 2 colunas, maior */
+  .tv-legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 12px;
+    font-size: 13px;
+    padding: 10px;
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+  }
+  .tv-legend i { width: 15px; height: 15px; }
+  .tv-ds { grid-column: 1 / -1; }
+}
+
+/* Celular bem estreito: legenda em 1 coluna */
+@media (max-width: 420px) {
+  .tv-legend { grid-template-columns: 1fr; }
+  .tvcell b { font-size: 15px; }
+  .tvfl { flex: 0 0 26px; font-size: 13px; }
+}
+
+/* =====================================================================
+   ESPELHO NO CELULAR - VERSAO ANTIGA DA TELA
+   (classes wrap / grid-tv / tower / floor / cells / cell / legend)
+   Garante que o ajuste funcione mesmo que a pagina do espelho ainda
+   nao tenha sido atualizada para a versao nova.
+   ===================================================================== */
+@media (max-width: 820px) {
+
+  .wrap { padding: 8px; max-width: 100%; }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    background: #0f1216; padding: 8px 4px;
+    border-bottom: 1px solid #2a323c; font-size: 15px;
+  }
+
+  /* torres uma abaixo da outra, em vez de lado a lado */
+  .grid-tv {
+    display: block !important;
+    grid-template-columns: none !important;
+  }
+
+  .tower {
+    min-width: 0 !important;
+    width: 100% !important;
+    margin-bottom: 18px;
+  }
+  .tower h3 {
+    font-size: 17px; padding: 10px;
+    position: sticky; top: 46px; z-index: 10;
+  }
+
+  .floor { gap: 5px; margin-bottom: 6px; }
+  .floor .fl { width: 30px; font-size: 14px; font-weight: 800; }
+
+  .cells { gap: 5px; }
+
+  .cell {
+    padding: 8px 3px; border-radius: 7px;
+    min-height: 54px; font-size: 11px;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .cell b { font-size: 16px; }
+  .cell .t { font-size: 10px; }
+
+  /* legenda maior, fixa no rodape, em 2 colunas */
+  .legend {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px 12px; font-size: 13px; padding: 10px;
+    background: #161a1f; border-radius: 8px;
+    position: sticky; bottom: 0; z-index: 20;
+  }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .sw { width: 15px; height: 15px; }
+}
+
+@media (max-width: 420px) {
+  .legend { grid-template-columns: 1fr; }
+  .cell b { font-size: 15px; }
+  .floor .fl { width: 26px; font-size: 13px; }
+}
